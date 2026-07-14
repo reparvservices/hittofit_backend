@@ -3,9 +3,16 @@ import TrainerProfile from "../models/TrainerProfile.js";
 import TrainerService from "../models/TrainerService.js";
 import SupplementProduct from "../models/SupplementProduct.js";
 import Order from "../models/Order.js";
+import Membership from "../models/Membership.js";
+import User from "../models/User.js";
 import { AppError } from "../utils/AppError.js";
 import asyncHandler from "../utils/asyncHandler.js";
-import { GYM_STATUS, ROLES } from "../utils/constants.js";
+import {
+  GYM_STATUS,
+  ORDER_STATUS,
+  ROLES,
+  USER_STATUS,
+} from "../utils/constants.js";
 
 const partnerRoles = [
   ROLES.GYM_OWNER,
@@ -54,13 +61,44 @@ export const getDashboard = asyncHandler(async (req, res) => {
     stats: {},
   };
 
+  const now = new Date();
+  const weekAhead = new Date(now);
+  weekAhead.setDate(weekAhead.getDate() + 7);
+
   if (req.user.role === ROLES.GYM_OWNER) {
     const gym = await Gym.findOne({ ownerId: req.user._id });
     base.onboardingComplete = Boolean(gym);
     base.gym = gym;
+
+    let members = 0;
+    let activeMembers = 0;
+    let expiringSoon = 0;
+    let revenue = 0;
+
+    if (gym) {
+      const memberships = await Membership.find({ gymId: gym._id });
+      members = memberships.length;
+      activeMembers = memberships.filter(
+        (m) => m.isActive && new Date(m.endDate) >= now
+      ).length;
+      expiringSoon = memberships.filter(
+        (m) =>
+          m.isActive &&
+          new Date(m.endDate) >= now &&
+          new Date(m.endDate) <= weekAhead
+      ).length;
+      revenue = memberships
+        .filter((m) => m.paymentStatus === "COMPLETED")
+        .reduce((sum, m) => sum + (Number(m.plan?.price) || 0), 0);
+    }
+
     base.stats = {
       plans: gym?.plans?.filter((p) => p.isActive).length || 0,
       status: gym?.status || "NOT_CREATED",
+      members,
+      activeMembers,
+      expiringSoon,
+      revenue,
     };
   }
 
@@ -80,12 +118,19 @@ export const getDashboard = asyncHandler(async (req, res) => {
       ).length,
       rejectedServices: services.filter((s) => s.approvalStatus === "REJECTED")
         .length,
+      certificates: profile?.certificates?.length || 0,
+      hourlyRate: profile?.hourlyRate || 0,
     };
   }
 
   if (req.user.role === ROLES.SUPPLEMENT_PROVIDER) {
     const products = await SupplementProduct.find({ sellerId: req.user._id });
-    const orders = await Order.countDocuments({ sellerId: req.user._id });
+    const orders = await Order.find({ sellerId: req.user._id });
+    const openStatuses = [
+      ORDER_STATUS.PENDING,
+      ORDER_STATUS.PROCESSING,
+      ORDER_STATUS.SHIPPED,
+    ];
     base.onboardingComplete = products.length > 0;
     base.stats = {
       products: products.length,
@@ -98,7 +143,12 @@ export const getDashboard = asyncHandler(async (req, res) => {
       ).length,
       rejectedProducts: products.filter((p) => p.approvalStatus === "REJECTED")
         .length,
-      orders,
+      orders: orders.length,
+      openOrders: orders.filter((o) => openStatuses.includes(o.status)).length,
+      lowStock: products.filter((p) => Number(p.stock) <= 5).length,
+      revenue: orders
+        .filter((o) => o.status !== ORDER_STATUS.CANCELLED)
+        .reduce((sum, o) => sum + (Number(o.amount) || 0), 0),
     };
   }
 
@@ -124,7 +174,8 @@ export const createGym = asyncHandler(async (req, res) => {
     throw new AppError("You already have a gym profile", 409);
   }
 
-  const { name, description, location, facilities, timing, images } = req.body;
+  const { name, description, location, facilities, timing, images, verificationDocuments } =
+    req.body;
 
   if (!name?.trim()) {
     throw new AppError("Gym name is required", 400);
@@ -138,6 +189,7 @@ export const createGym = asyncHandler(async (req, res) => {
     facilities: facilities || [],
     timing: timing || [],
     images: images || [],
+    verificationDocuments: verificationDocuments || [],
     status: GYM_STATUS.PENDING,
   });
 
@@ -156,7 +208,8 @@ export const updateGym = asyncHandler(async (req, res) => {
     throw new AppError("Gym profile not found. Create one first.", 404);
   }
 
-  const { name, description, location, facilities, timing, images } = req.body;
+  const { name, description, location, facilities, timing, images, verificationDocuments } =
+    req.body;
 
   if (name !== undefined) gym.name = name.trim();
   if (description !== undefined) gym.description = description;
@@ -174,6 +227,9 @@ export const updateGym = asyncHandler(async (req, res) => {
   if (facilities !== undefined) gym.facilities = facilities;
   if (timing !== undefined) gym.timing = timing;
   if (images !== undefined) gym.images = images;
+  if (verificationDocuments !== undefined) {
+    gym.verificationDocuments = verificationDocuments;
+  }
 
   if (
     gym.status === GYM_STATUS.APPROVED &&
@@ -302,7 +358,7 @@ export const createTrainerProfile = asyncHandler(async (req, res) => {
     throw new AppError("Trainer profile already exists", 409);
   }
 
-  const { bio, experience, skills, specializations, hourlyRate, gymId } =
+  const { bio, experience, skills, specializations, hourlyRate, gymId, certificates } =
     req.body;
 
   const profile = await TrainerProfile.create({
@@ -313,6 +369,7 @@ export const createTrainerProfile = asyncHandler(async (req, res) => {
     specializations: specializations || [],
     hourlyRate: Number(hourlyRate) || 0,
     gymId: gymId || undefined,
+    certificates: Array.isArray(certificates) ? certificates : [],
     isVerified: false,
   });
 
@@ -331,7 +388,7 @@ export const updateTrainerProfile = asyncHandler(async (req, res) => {
     throw new AppError("Trainer profile not found. Create one first.", 404);
   }
 
-  const { bio, experience, skills, specializations, hourlyRate, gymId } =
+  const { bio, experience, skills, specializations, hourlyRate, gymId, certificates } =
     req.body;
 
   if (bio !== undefined) profile.bio = bio;
@@ -340,6 +397,9 @@ export const updateTrainerProfile = asyncHandler(async (req, res) => {
   if (specializations !== undefined) profile.specializations = specializations;
   if (hourlyRate !== undefined) profile.hourlyRate = Number(hourlyRate);
   if (gymId !== undefined) profile.gymId = gymId || undefined;
+  if (certificates !== undefined) {
+    profile.certificates = Array.isArray(certificates) ? certificates : [];
+  }
 
   await profile.save();
 
@@ -614,5 +674,206 @@ export const deleteTrainerService = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     message: "Service deleted",
+  });
+});
+
+const ORDER_TRANSITIONS = {
+  [ORDER_STATUS.PENDING]: [ORDER_STATUS.PROCESSING, ORDER_STATUS.CANCELLED],
+  [ORDER_STATUS.PROCESSING]: [ORDER_STATUS.SHIPPED, ORDER_STATUS.CANCELLED],
+  [ORDER_STATUS.SHIPPED]: [ORDER_STATUS.DELIVERED],
+  [ORDER_STATUS.DELIVERED]: [],
+  [ORDER_STATUS.CANCELLED]: [],
+};
+
+export const getMemberships = asyncHandler(async (req, res) => {
+  assertPartnerRole(req.user, [ROLES.GYM_OWNER]);
+
+  const gym = await Gym.findOne({ ownerId: req.user._id });
+  if (!gym) {
+    throw new AppError("Gym profile not found. Create one first.", 404);
+  }
+
+  const filter = { gymId: gym._id };
+  if (req.query.status === "active") {
+    filter.isActive = true;
+    filter.endDate = { $gte: new Date() };
+  } else if (req.query.status === "expired") {
+    filter.$or = [{ isActive: false }, { endDate: { $lt: new Date() } }];
+  }
+
+  const memberships = await Membership.find(filter)
+    .populate("customerId", "name email phone profileImage")
+    .sort({ createdAt: -1 });
+
+  res.json({
+    success: true,
+    data: { memberships, gym: { _id: gym._id, name: gym.name } },
+  });
+});
+
+export const getOrders = asyncHandler(async (req, res) => {
+  assertPartnerRole(req.user, [ROLES.SUPPLEMENT_PROVIDER]);
+
+  const filter = { sellerId: req.user._id };
+  if (req.query.status && Object.values(ORDER_STATUS).includes(req.query.status)) {
+    filter.status = req.query.status;
+  }
+
+  const orders = await Order.find(filter)
+    .populate("customerId", "name email phone")
+    .sort({ createdAt: -1 });
+
+  res.json({
+    success: true,
+    data: { orders },
+  });
+});
+
+export const getOrderById = asyncHandler(async (req, res) => {
+  assertPartnerRole(req.user, [ROLES.SUPPLEMENT_PROVIDER]);
+
+  const order = await Order.findOne({
+    _id: req.params.id,
+    sellerId: req.user._id,
+  }).populate("customerId", "name email phone");
+
+  if (!order) {
+    throw new AppError("Order not found", 404);
+  }
+
+  res.json({
+    success: true,
+    data: { order },
+  });
+});
+
+export const updateOrderStatus = asyncHandler(async (req, res) => {
+  assertPartnerRole(req.user, [ROLES.SUPPLEMENT_PROVIDER]);
+
+  const { status } = req.body;
+  if (!status || !Object.values(ORDER_STATUS).includes(status)) {
+    throw new AppError("Valid order status is required", 400);
+  }
+
+  const order = await Order.findOne({
+    _id: req.params.id,
+    sellerId: req.user._id,
+  });
+
+  if (!order) {
+    throw new AppError("Order not found", 404);
+  }
+
+  const allowed = ORDER_TRANSITIONS[order.status] || [];
+  if (!allowed.includes(status)) {
+    throw new AppError(
+      `Cannot move order from ${order.status} to ${status}`,
+      400
+    );
+  }
+
+  order.status = status;
+  await order.save();
+  await order.populate("customerId", "name email phone");
+
+  res.json({
+    success: true,
+    message: `Order marked as ${status}`,
+    data: { order },
+  });
+});
+
+export const getClients = asyncHandler(async (req, res) => {
+  assertPartnerRole(req.user, [ROLES.TRAINER]);
+
+  const profile = await getTrainerProfileOrFail(req.user._id);
+  await profile.populate("assignedCustomers", "name email phone profileImage status");
+
+  res.json({
+    success: true,
+    data: { clients: profile.assignedCustomers || [] },
+  });
+});
+
+export const addClient = asyncHandler(async (req, res) => {
+  assertPartnerRole(req.user, [ROLES.TRAINER]);
+
+  const email = String(req.body.email || "")
+    .toLowerCase()
+    .trim();
+  if (!email) {
+    throw new AppError("Customer email is required", 400);
+  }
+
+  const customer = await User.findOne({
+    email,
+    role: ROLES.CUSTOMER,
+  });
+
+  if (!customer) {
+    throw new AppError("No customer account found with that email", 404);
+  }
+
+  if (
+    customer.status === USER_STATUS.BLOCKED ||
+    customer.status === USER_STATUS.REJECTED
+  ) {
+    throw new AppError("This customer account is not available", 400);
+  }
+
+  const profile = await getTrainerProfileOrFail(req.user._id);
+  const alreadyAssigned = (profile.assignedCustomers || []).some(
+    (id) => String(id) === String(customer._id)
+  );
+
+  if (alreadyAssigned) {
+    throw new AppError("Customer is already assigned to you", 409);
+  }
+
+  profile.assignedCustomers.push(customer._id);
+  await profile.save();
+  await profile.populate("assignedCustomers", "name email phone profileImage status");
+
+  res.status(201).json({
+    success: true,
+    message: "Client added",
+    data: { clients: profile.assignedCustomers },
+  });
+});
+
+export const removeClient = asyncHandler(async (req, res) => {
+  assertPartnerRole(req.user, [ROLES.TRAINER]);
+
+  const profile = await getTrainerProfileOrFail(req.user._id);
+  const before = profile.assignedCustomers.length;
+  profile.assignedCustomers = profile.assignedCustomers.filter(
+    (id) => String(id) !== String(req.params.customerId)
+  );
+
+  if (profile.assignedCustomers.length === before) {
+    throw new AppError("Client not found", 404);
+  }
+
+  await profile.save();
+  await profile.populate("assignedCustomers", "name email phone profileImage status");
+
+  res.json({
+    success: true,
+    message: "Client removed",
+    data: { clients: profile.assignedCustomers },
+  });
+});
+
+export const getPartnerGymOptions = asyncHandler(async (req, res) => {
+  assertPartnerRole(req.user, [ROLES.TRAINER]);
+
+  const gyms = await Gym.find({ status: GYM_STATUS.APPROVED })
+    .select("name location.city status")
+    .sort({ name: 1 })
+    .limit(200);
+
+  res.json({
+    success: true,
+    data: { gyms },
   });
 });

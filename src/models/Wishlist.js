@@ -28,7 +28,7 @@ const wishlistSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-wishlistSchema.index({ userId: 1 });
+// userId already has unique: true (creates the index) — don't add a second one
 
 const Wishlist = mongoose.model("Wishlist", wishlistSchema);
 
