@@ -41,6 +41,25 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    bio: {
+      type: String,
+      default: "",
+      maxlength: 280,
+    },
+    wellnessPreferences: {
+      type: [String],
+      default: [],
+    },
+    fitnessGoals: {
+      type: [String],
+      default: [],
+    },
+    notificationSettings: {
+      workoutReminders: { type: Boolean, default: true },
+    },
+    passwordChangedAt: {
+      type: Date,
+    },
     resetPasswordToken: String,
     resetPasswordExpires: Date,
   },
@@ -65,11 +84,19 @@ userSchema.methods.toPublicJSON = function toPublicJSON() {
     id: this._id,
     name: this.name,
     email: this.email,
-    phone: this.phone,
+    phone: this.phone || "",
     role: this.role,
     status: this.status,
-    profileImage: this.profileImage,
+    profileImage: this.profileImage || "",
+    bio: this.bio || "",
+    wellnessPreferences: this.wellnessPreferences || [],
+    fitnessGoals: this.fitnessGoals || [],
+    notificationSettings: {
+      workoutReminders: this.notificationSettings?.workoutReminders !== false,
+    },
+    passwordChangedAt: this.passwordChangedAt || null,
     createdAt: this.createdAt,
+    updatedAt: this.updatedAt,
   };
 };
 

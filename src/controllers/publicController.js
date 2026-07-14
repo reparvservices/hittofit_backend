@@ -1,4 +1,6 @@
 import Gym from "../models/Gym.js";
+import TrainerProfile from "../models/TrainerProfile.js";
+import TrainerService from "../models/TrainerService.js";
 import SupplementProduct from "../models/SupplementProduct.js";
 import { AppError } from "../utils/AppError.js";
 import asyncHandler from "../utils/asyncHandler.js";
@@ -42,10 +44,10 @@ export const getGyms = asyncHandler(async (req, res) => {
 });
 
 export const getGymById = asyncHandler(async (req, res) => {
-  const gym = await Gym.findById(req.params.id).populate(
-    "ownerId",
-    "name email phone"
-  );
+  const gym = await Gym.findOne({
+    _id: req.params.id,
+    status: "APPROVED",
+  }).populate("ownerId", "name email phone");
 
   if (!gym) {
     throw new AppError("Gym not found", 404);
@@ -134,5 +136,96 @@ export const getSupplementById = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     data: { product },
+  });
+});
+
+export const getTrainers = asyncHandler(async (req, res) => {
+  const { search, gymId, page = 1, limit = 20 } = req.query;
+  const filter = { isVerified: true };
+
+  if (gymId) filter.gymId = gymId;
+
+  const skip = (Number(page) - 1) * Number(limit);
+
+  let trainers = await TrainerProfile.find(filter)
+    .populate({
+      path: "userId",
+      select: "name email profileImage status",
+      match: { status: "ACTIVE" },
+    })
+    .populate("gymId", "name location.city")
+    .sort({ rating: -1, createdAt: -1 })
+    .skip(skip)
+    .limit(Number(limit));
+
+  trainers = trainers.filter((trainer) => trainer.userId);
+
+  if (search) {
+    const term = search.toLowerCase();
+    trainers = trainers.filter((trainer) => {
+      const name = trainer.userId?.name?.toLowerCase() || "";
+      const skills = (trainer.skills || []).join(" ").toLowerCase();
+      const specs = (trainer.specializations || []).join(" ").toLowerCase();
+      return name.includes(term) || skills.includes(term) || specs.includes(term);
+    });
+  }
+
+  const total = await TrainerProfile.countDocuments(filter);
+
+  res.json({
+    success: true,
+    data: {
+      trainers,
+      pagination: {
+        page: Number(page),
+        limit: Number(limit),
+        total,
+        pages: Math.ceil(total / Number(limit)),
+      },
+    },
+  });
+});
+
+export const getTrainerById = asyncHandler(async (req, res) => {
+  const trainer = await TrainerProfile.findOne({
+    _id: req.params.id,
+    isVerified: true,
+  })
+    .populate({
+      path: "userId",
+      select: "name email profileImage status phone",
+      match: { status: "ACTIVE" },
+    })
+    .populate("gymId", "name location");
+
+  if (!trainer?.userId) {
+    throw new AppError("Trainer not found", 404);
+  }
+
+  res.json({
+    success: true,
+    data: { trainer },
+  });
+});
+
+export const getTrainerServices = asyncHandler(async (req, res) => {
+  const trainer = await TrainerProfile.findOne({
+    _id: req.params.id,
+    isVerified: true,
+  });
+
+  if (!trainer) {
+    throw new AppError("Trainer not found", 404);
+  }
+
+  const services = await TrainerService.find({
+    trainerId: trainer._id,
+    isApproved: true,
+    isActive: true,
+  }).sort({ price: 1 });
+
+  res.json({
+    success: true,
+    data: { services },
   });
 });

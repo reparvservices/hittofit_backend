@@ -1,6 +1,8 @@
 import User from "../models/User.js";
 import Gym from "../models/Gym.js";
 import TrainerProfile from "../models/TrainerProfile.js";
+import TrainerService from "../models/TrainerService.js";
+import SupplementProduct from "../models/SupplementProduct.js";
 import Payment from "../models/Payment.js";
 import { AppError } from "../utils/AppError.js";
 import asyncHandler from "../utils/asyncHandler.js";
@@ -15,6 +17,8 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
     totalGyms,
     pendingGyms,
     pendingPartners,
+    pendingProducts,
+    pendingServices,
     revenueResult,
   ] = await Promise.all([
     User.countDocuments({ role: ROLES.CUSTOMER }),
@@ -26,6 +30,12 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
     User.countDocuments({
       role: { $in: [ROLES.GYM_OWNER, ROLES.TRAINER, ROLES.SUPPLEMENT_PROVIDER] },
       status: USER_STATUS.PENDING,
+    }),
+    SupplementProduct.countDocuments({
+      $or: [{ approvalStatus: "PENDING" }, { approvalStatus: { $exists: false }, isApproved: false }],
+    }),
+    TrainerService.countDocuments({
+      $or: [{ approvalStatus: "PENDING" }, { approvalStatus: { $exists: false }, isApproved: false }],
     }),
     Payment.aggregate([
       { $match: { status: PAYMENT_STATUS.COMPLETED } },
@@ -43,6 +53,8 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
       totalGyms,
       pendingGyms,
       pendingPartners,
+      pendingProducts,
+      pendingServices,
       totalRevenue: revenueResult[0]?.total || 0,
     },
   });
@@ -242,6 +254,22 @@ export const getPendingGyms = asyncHandler(async (req, res) => {
   });
 });
 
+export const getGymById = asyncHandler(async (req, res) => {
+  const gym = await Gym.findById(req.params.id).populate(
+    "ownerId",
+    "name email phone status"
+  );
+
+  if (!gym) {
+    throw new AppError("Gym not found", 404);
+  }
+
+  res.json({
+    success: true,
+    data: { gym },
+  });
+});
+
 export const updateGymStatus = asyncHandler(async (req, res) => {
   const { status } = req.body;
   const allowed = ["APPROVED", "REJECTED", "SUSPENDED", "PENDING"];
@@ -250,14 +278,25 @@ export const updateGymStatus = asyncHandler(async (req, res) => {
     throw new AppError("Invalid gym status", 400);
   }
 
-  const gym = await Gym.findByIdAndUpdate(
-    req.params.id,
-    { status },
-    { new: true, runValidators: true }
-  ).populate("ownerId", "name email phone");
+  const gym = await Gym.findById(req.params.id);
 
   if (!gym) {
     throw new AppError("Gym not found", 404);
+  }
+
+  gym.status = status;
+  await gym.save();
+  await gym.populate("ownerId", "name email phone status");
+
+  if (gym.ownerId) {
+    if (status === "APPROVED" && gym.ownerId.status === USER_STATUS.PENDING) {
+      gym.ownerId.status = USER_STATUS.ACTIVE;
+      await gym.ownerId.save();
+    }
+    if (status === "REJECTED" && gym.ownerId.status === USER_STATUS.PENDING) {
+      gym.ownerId.status = USER_STATUS.REJECTED;
+      await gym.ownerId.save();
+    }
   }
 
   res.json({
@@ -304,5 +343,108 @@ export const verifyTrainer = asyncHandler(async (req, res) => {
     success: true,
     message: isVerified ? "Trainer verified" : "Trainer verification revoked",
     data: { trainer },
+  });
+});
+
+export const getPendingProducts = asyncHandler(async (req, res) => {
+  const products = await SupplementProduct.find({
+    $or: [
+      { approvalStatus: "PENDING" },
+      { approvalStatus: { $exists: false }, isApproved: false },
+    ],
+  })
+    .populate("sellerId", "name email phone role status")
+    .sort({ createdAt: -1 });
+
+  res.json({
+    success: true,
+    data: { products },
+  });
+});
+
+export const updateProductApproval = asyncHandler(async (req, res) => {
+  const { isApproved, rejectionReason } = req.body;
+  const approved = Boolean(isApproved);
+
+  const product = await SupplementProduct.findById(req.params.id).populate(
+    "sellerId",
+    "name email phone role status"
+  );
+
+  if (!product) {
+    throw new AppError("Product not found", 404);
+  }
+
+  product.isApproved = approved;
+  product.approvalStatus = approved ? "APPROVED" : "REJECTED";
+  product.rejectionReason = approved
+    ? ""
+    : (rejectionReason || "").trim() || "Rejected by admin. Please update and resubmit.";
+
+  await product.save();
+
+  if (approved && product.sellerId?.status === USER_STATUS.PENDING) {
+    await User.findByIdAndUpdate(product.sellerId._id, {
+      status: USER_STATUS.ACTIVE,
+    });
+  }
+
+  res.json({
+    success: true,
+    message: approved ? "Product approved" : "Product rejected",
+    data: { product },
+  });
+});
+
+export const getPendingServices = asyncHandler(async (req, res) => {
+  const services = await TrainerService.find({
+    $or: [
+      { approvalStatus: "PENDING" },
+      { approvalStatus: { $exists: false }, isApproved: false },
+    ],
+  })
+    .populate("userId", "name email phone status")
+    .populate({
+      path: "trainerId",
+      select: "bio skills specializations isVerified",
+    })
+    .sort({ createdAt: -1 });
+
+  res.json({
+    success: true,
+    data: { services },
+  });
+});
+
+export const updateServiceApproval = asyncHandler(async (req, res) => {
+  const { isApproved, rejectionReason } = req.body;
+  const approved = Boolean(isApproved);
+
+  const service = await TrainerService.findById(req.params.id)
+    .populate("userId", "name email phone status")
+    .populate("trainerId", "bio skills isVerified");
+
+  if (!service) {
+    throw new AppError("Service not found", 404);
+  }
+
+  service.isApproved = approved;
+  service.approvalStatus = approved ? "APPROVED" : "REJECTED";
+  service.rejectionReason = approved
+    ? ""
+    : (rejectionReason || "").trim() || "Rejected by admin. Please update and resubmit.";
+
+  await service.save();
+
+  if (approved && service.userId?.status === USER_STATUS.PENDING) {
+    await User.findByIdAndUpdate(service.userId._id, {
+      status: USER_STATUS.ACTIVE,
+    });
+  }
+
+  res.json({
+    success: true,
+    message: approved ? "Service approved" : "Service rejected",
+    data: { service },
   });
 });

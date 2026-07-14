@@ -1,5 +1,11 @@
 import mongoose from "mongoose";
 
+export const APPROVAL_STATUS = {
+  PENDING: "PENDING",
+  APPROVED: "APPROVED",
+  REJECTED: "REJECTED",
+};
+
 const supplementProductSchema = new mongoose.Schema(
   {
     sellerId: {
@@ -20,6 +26,12 @@ const supplementProductSchema = new mongoose.Schema(
     stock: { type: Number, required: true, min: 0, default: 0 },
     images: [{ type: String }],
     isApproved: { type: Boolean, default: false },
+    approvalStatus: {
+      type: String,
+      enum: Object.values(APPROVAL_STATUS),
+      default: APPROVAL_STATUS.PENDING,
+    },
+    rejectionReason: { type: String, default: "" },
     isActive: { type: Boolean, default: true },
     rating: { type: Number, default: 0, min: 0, max: 5 },
   },
@@ -28,6 +40,7 @@ const supplementProductSchema = new mongoose.Schema(
 
 supplementProductSchema.index({ sellerId: 1 });
 supplementProductSchema.index({ isApproved: 1, isActive: 1, name: 1 });
+supplementProductSchema.index({ approvalStatus: 1 });
 
 const SupplementProduct = mongoose.model(
   "SupplementProduct",

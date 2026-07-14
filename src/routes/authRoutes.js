@@ -5,6 +5,7 @@ import {
   checkUser,
   getMe,
   updateProfile,
+  changePassword,
   forgotPassword,
   resetPassword,
 } from "../controllers/authController.js";
@@ -15,6 +16,7 @@ import {
   forgotPasswordValidation,
   resetPasswordValidation,
   updateProfileValidation,
+  changePasswordValidation,
 } from "../middlewares/validators/authValidators.js";
 import validateRequest from "../middlewares/validateRequest.js";
 import { authMiddleware } from "../middlewares/authMiddleware.js";
@@ -44,6 +46,13 @@ router.put(
   updateProfileValidation,
   validateRequest,
   updateProfile
+);
+router.put(
+  "/change-password",
+  authMiddleware,
+  changePasswordValidation,
+  validateRequest,
+  changePassword
 );
 
 export default router;

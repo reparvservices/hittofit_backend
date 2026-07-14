@@ -11,9 +11,14 @@ import {
   createTrainerProfile,
   updateTrainerProfile,
   getProducts,
+  getProduct,
   createProduct,
   updateProduct,
   deleteProduct,
+  getTrainerServices,
+  createTrainerService,
+  updateTrainerService,
+  deleteTrainerService,
 } from "../controllers/partnerController.js";
 import { authMiddleware, roleMiddleware } from "../middlewares/authMiddleware.js";
 import { ROLES } from "../utils/constants.js";
@@ -40,7 +45,13 @@ router.get("/trainer-profile", getTrainerProfile);
 router.post("/trainer-profile", createTrainerProfile);
 router.put("/trainer-profile", updateTrainerProfile);
 
+router.get("/services", getTrainerServices);
+router.post("/services", createTrainerService);
+router.put("/services/:id", updateTrainerService);
+router.delete("/services/:id", deleteTrainerService);
+
 router.get("/products", getProducts);
+router.get("/products/:id", getProduct);
 router.post("/products", createProduct);
 router.put("/products/:id", updateProduct);
 router.delete("/products/:id", deleteProduct);

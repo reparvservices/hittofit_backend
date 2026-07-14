@@ -63,6 +63,19 @@ export const updateProfileValidation = [
   body("name").optional().trim().notEmpty().withMessage("Name cannot be empty"),
   body("phone").optional().trim(),
   body("profileImage").optional().isString(),
+  body("bio").optional().isString().isLength({ max: 280 }),
+  body("wellnessPreferences").optional().isArray(),
+  body("fitnessGoals").optional().isArray(),
+  body("notificationSettings").optional().isObject(),
+];
+
+export const changePasswordValidation = [
+  body("currentPassword")
+    .notEmpty()
+    .withMessage("Current password is required"),
+  body("newPassword")
+    .isLength({ min: 6 })
+    .withMessage("New password must be at least 6 characters"),
 ];
 
 export const updateUserStatusValidation = [

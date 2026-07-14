@@ -150,11 +150,40 @@ export const getMe = asyncHandler(async (req, res) => {
 });
 
 export const updateProfile = asyncHandler(async (req, res) => {
-  const { name, phone, profileImage } = req.body;
+  const {
+    name,
+    phone,
+    profileImage,
+    bio,
+    wellnessPreferences,
+    fitnessGoals,
+    notificationSettings,
+  } = req.body;
 
-  if (name !== undefined) req.user.name = name;
-  if (phone !== undefined) req.user.phone = phone;
+  if (name !== undefined) req.user.name = String(name).trim();
+  if (phone !== undefined) req.user.phone = String(phone).trim();
   if (profileImage !== undefined) req.user.profileImage = profileImage;
+  if (bio !== undefined) req.user.bio = String(bio).trim().slice(0, 280);
+  if (Array.isArray(wellnessPreferences)) {
+    req.user.wellnessPreferences = wellnessPreferences
+      .map((item) => String(item).trim())
+      .filter(Boolean)
+      .slice(0, 12);
+  }
+  if (Array.isArray(fitnessGoals)) {
+    req.user.fitnessGoals = fitnessGoals
+      .map((item) => String(item).trim())
+      .filter(Boolean)
+      .slice(0, 12);
+  }
+  if (notificationSettings && typeof notificationSettings === "object") {
+    req.user.notificationSettings = {
+      workoutReminders:
+        notificationSettings.workoutReminders !== undefined
+          ? Boolean(notificationSettings.workoutReminders)
+          : req.user.notificationSettings?.workoutReminders !== false,
+    };
+  }
 
   await req.user.save();
 
@@ -163,6 +192,35 @@ export const updateProfile = asyncHandler(async (req, res) => {
     message: "Profile updated successfully",
     data: {
       user: req.user.toPublicJSON(),
+    },
+  });
+});
+
+export const changePassword = asyncHandler(async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+
+  if (!currentPassword || !newPassword) {
+    throw new AppError("Current password and new password are required", 400);
+  }
+
+  if (String(newPassword).length < 6) {
+    throw new AppError("New password must be at least 6 characters", 400);
+  }
+
+  const user = await User.findById(req.user._id).select("+password");
+  if (!user || !(await user.comparePassword(currentPassword))) {
+    throw new AppError("Current password is incorrect", 400);
+  }
+
+  user.password = newPassword;
+  user.passwordChangedAt = new Date();
+  await user.save();
+
+  res.json({
+    success: true,
+    message: "Password updated successfully",
+    data: {
+      user: user.toPublicJSON(),
     },
   });
 });
@@ -211,6 +269,7 @@ export const resetPassword = asyncHandler(async (req, res) => {
   }
 
   user.password = password;
+  user.passwordChangedAt = new Date();
   user.resetPasswordToken = undefined;
   user.resetPasswordExpires = undefined;
   await user.save();

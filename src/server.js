@@ -4,6 +4,7 @@ import cors from "cors";
 import connectDB from "./config/db.js";
 import routes from "./routes/index.js";
 import errorHandler, { notFoundHandler } from "./middlewares/errorHandler.js";
+import { UPLOADS_DIR } from "./middlewares/uploadMiddleware.js";
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -32,6 +33,8 @@ app.use(
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
+
+app.use("/uploads", express.static(UPLOADS_DIR));
 
 app.use("/api", routes);
 
